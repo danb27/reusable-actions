@@ -1,0 +1,34 @@
+name: Poetry + Pytest + Precommit Workflow
+
+on:
+  workflow_call:
+    inputs:
+      python-versions:
+        type: string
+        description: 'Python versions to use for testing'
+        required: false
+        default: '["3.11", "3.12"]'
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ${{ fromJson(inputs.python-versions) }}
+      fail-fast: false  # Continue running jobs even if one fails
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+      - name: Install dependencies
+        run: poetry install --with test
+      - name: Run tests
+        run: poetry run pytest
+      - name: Run pre-commit hooks
+        uses: pre-commit/action@v3.0.1
