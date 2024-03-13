@@ -1,0 +1,74 @@
+name: Poetry + Pytest + Precommit Workflow
+
+on:
+  workflow_call:
+    inputs:
+      python-versions:
+        type: string
+        description: 'Python versions to use for testing'
+        required: false
+        default: '["3.11", "3.12"]'
+      enable-codeartifact-login:
+        type: boolean
+        description: 'Enable login to AWS CodeArtifact'
+        required: false
+        default: false
+    secrets:
+      AWS_ROLE:
+        description: 'AWS Role ARN to assume if using CodeArtifact'
+        required: false
+      AWS_REGION:
+        description: 'AWS Region to use if using CodeArtifact'
+        required: false
+      AWS_CODEARTIFACT_DOMAIN:
+        description: 'AWS CodeArtifact domain'
+        required: false
+      AWS_CODEARTIFACT_REPOSITORY:
+        description: 'AWS CodeArtifact repository name'
+        required: false
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ${{ fromJson(inputs.python-versions) }}
+      fail-fast: false  # Continue running jobs even if one fails
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+      - name: Configure AWS credentials (if using CodeArtifact)
+        if: ${{ inputs.enable-codeartifact-login }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-session-name: ActionsSession
+      - name: Authenticate to CodeArtifact (if using CodeArtifact)
+        if: ${{ inputs.enable-codeartifact-login }}
+        run: |
+          export POETRY_HTTP_BASIC_DOWNLOAD_USERNAME=aws
+          export POETRY_HTTP_BASIC_DOWNLOAD_PASSWORD=$( \
+              aws codeartifact get-authorization-token \
+                  --domain ${{ secrets.AWS_CODEARTIFACT_DOMAIN }} \
+                  --query authorizationToken --output text)
+          export POETRY_REPOSITORIES_DOWNLOAD_URL=$( \
+              aws codeartifact get-repository-endpoint \
+                    --domain ${{ secrets.AWS_CODEARTIFACT_DOMAIN }} \
+                    --repository ${{ secrets.AWS_CODEARTIFACT_REPOSITORY }} \
+                    --format pypi --query repositoryEndpoint --output text)
+          poetry config repositories.download "${POETRY_REPOSITORIES_DOWNLOAD_URL}/simple/"
+          poetry config pypi-token.download $POETRY_HTTP_BASIC_DOWNLOAD_PASSWORD
+      - name: Install dependencies
+        run: poetry install --with test
+      - name: Run tests
+        run: poetry run pytest
+      - name: Run pre-commit hooks
+        uses: pre-commit/action@v3.0.1

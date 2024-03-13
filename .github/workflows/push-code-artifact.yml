@@ -1,0 +1,65 @@
+name: Python Package Build and Publish to AWS CodeArtifact
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: 'The version of Python to use'
+        required: false
+        type: string
+        default: '3.11'
+    secrets:
+      AWS_ROLE:
+        description: 'AWS Role ARN to assume if using CodeArtifact'
+        required: false
+      AWS_REGION:
+        description: 'AWS Region to use if using CodeArtifact'
+        required: false
+      AWS_CODEARTIFACT_DOMAIN:
+        description: 'AWS CodeArtifact domain'
+        required: false
+      AWS_CODEARTIFACT_REPOSITORY:
+        description: 'AWS CodeArtifact repository name'
+        required: false
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1.2.0
+        with:
+          virtualenvs-create: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-session-name: ActionsSession
+
+      - name: Authenticate to CodeArtifact
+        run: |
+          export POETRY_HTTP_BASIC_PUBLISH_USERNAME=aws
+          export POETRY_HTTP_BASIC_PUBLISH_PASSWORD=$( \
+              aws codeartifact get-authorization-token \
+                  --domain ${{ secrets.AWS_CODEARTIFACT_DOMAIN }} \
+                  --query authorizationToken --output text)
+          export POETRY_REPOSITORIES_PUBLISH_URL=$( \
+              aws codeartifact get-repository-endpoint \
+                    --domain ${{ secrets.AWS_CODEARTIFACT_DOMAIN }} \
+                    --repository ${{ secrets.AWS_CODEARTIFACT_REPOSITORY }} \
+                    --format pypi --query repositoryEndpoint --output text)
+          poetry config repositories.publish $POETRY_REPOSITORIES_PUBLISH_URL
+          poetry config pypi-token.publish $POETRY_HTTP_BASIC_PUBLISH_PASSWORD
+
+      - name: Build and Push to AWS CodeArtifact
+        run: poetry publish --build -r publish
