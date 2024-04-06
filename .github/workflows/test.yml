@@ -13,6 +13,11 @@ on:
         description: 'Enable login to AWS CodeArtifact'
         required: false
         default: false
+      run_pre_commit:
+        type: boolean
+        description: 'Run pre-commit hooks'
+        required: false
+        default: true
     secrets:
       AWS_ROLE:
         description: 'AWS Role ARN to assume if using CodeArtifact'
@@ -71,4 +76,5 @@ jobs:
       - name: Run tests
         run: poetry run pytest
       - name: Run pre-commit hooks
+        if: ${{ inputs.run_pre_commit }}
         uses: pre-commit/action@v3.0.1
