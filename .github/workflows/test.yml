@@ -7,7 +7,7 @@ on:
         type: string
         description: 'Python versions to use for testing'
         required: false
-        default: '["3.11", "3.12"]'
+        default: '["3.9", "3.10", "3.11", "3.12"]'
       enable-codeartifact-login:
         type: boolean
         description: 'Enable login to AWS CodeArtifact'
