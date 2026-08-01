@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # Keeps action versions current, including the commit-SHA pins - Dependabot
+  # rewrites the SHA and the trailing version comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
