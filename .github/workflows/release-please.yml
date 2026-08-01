@@ -1,0 +1,21 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # Opens a release PR that accumulates conventional commits, then tags and
+      # creates the GitHub release when that PR is merged.
+      #
+      # Note: PRs opened with the default GITHUB_TOKEN do not trigger
+      # `on: pull_request` workflows, so CI will not run on the release PR
+      # itself. That PR only touches the changelog and version file.
+      - uses: googleapis/release-please-action@v5

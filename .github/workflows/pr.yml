@@ -1,0 +1,25 @@
+name: PR
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  pull-requests: read
+
+# Inlined rather than calling ./pr-title.yml: this repository defines that
+# workflow, so calling its own copy at @main would not exist until after the
+# first merge.
+jobs:
+  title:
+    name: Lint title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          subjectPattern: '^(?![A-Z])(?!.*\.$).+$'
+          subjectPatternError: >-
+            The subject "{subject}" is invalid: start it lower case and drop any
+            trailing full stop, since it becomes the commit subject line.
