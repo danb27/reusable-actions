@@ -7,8 +7,8 @@ Reusable workflows intended to be called from other repositories via `workflow_c
 |---------------------------|-----------------------|--------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | test.yml                  | Python, pytest        | CodeArtifact, pre-commit | Can optionally authenticate to CodeArtifact to install private python packages and turn on pre-commit                                                                                                                |
 | push-code-artifact.yml    | Python, CodeArtifact  |                          | See [this](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services#updating-your-github-actions-workflow) if using OpenID Connect in AWS |
-| terraform-plan.yml        | Terraform, AWS OIDC   | Cloudflare               | Checks formatting and plans, then comments the plan on the pull request. Runs with `-lock=false` so a plan can never block an apply                                                                                  |
-| terraform-apply.yml       | Terraform, AWS OIDC   | Cloudflare               | Applies on merge. Callers should set a `concurrency` group so two merges cannot apply the same state at once                                                                                                         |
+| terraform-plan.yml        | Terraform, AWS OIDC   | Any TF provider          | Checks formatting and plans, then comments the plan on the pull request. Runs with `-lock=false` so a plan can never block an apply                                                                                  |
+| terraform-apply.yml       | Terraform, AWS OIDC   | Any TF provider          | Applies on merge. Callers should set a `concurrency` group so two merges cannot apply the same state at once                                                                                                         |
 
 ## Terraform workflows
 
@@ -21,12 +21,23 @@ automatically. Use it for values that shouldn't live in the repository.
 { "cloudflare_account_id": "abc123", "allowed_emails": ["you@example.com"] }
 ```
 
-One blob rather than a named secret per variable is a deliberate trade: it keeps
-the workflow interface stable as configurations grow, at the cost of granularity.
-Provider credentials that aren't Terraform variables — `CLOUDFLARE_API_TOKEN` —
-stay named secrets so GitHub masks them individually.
+Provider credentials aren't Terraform variables, so they take a second blob,
+`PROVIDER_ENV_JSON`, whose keys become environment variables:
 
-Terraform version and AWS region are hardcoded to `1.14.3` and `us-east-1`.
+```json
+{ "CLOUDFLARE_API_TOKEN": "...", "DATADOG_API_KEY": "..." }
+```
+
+A named secret per provider would mean editing this workflow every time a
+downstream repo adopts one. GitHub masks a secret as a whole but not the values
+*inside* a JSON blob, so both workflows mask each value explicitly with
+`::add-mask::` before exporting it.
+
+One blob rather than a named secret per value is a deliberate trade: it keeps
+the workflow interface stable as configurations grow, at the cost of
+granularity.
+
+Terraform version and AWS region are hardcoded to `1.14.3` and `us-west-2`.
 Neither is an input, because nothing needed a second value yet; both are a
 one-line change when something does.
 
@@ -96,7 +107,7 @@ jobs:
     secrets:
       AWS_ROLE: ${{ secrets.AWS_ROLE }}
       TF_VARS_JSON: ${{ secrets.TF_VARS_JSON }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      PROVIDER_ENV_JSON: ${{ secrets.PROVIDER_ENV_JSON }}
 ```
 
 ### `.github/workflows/terraform-apply.yml`
@@ -124,7 +135,7 @@ jobs:
     secrets:
       AWS_ROLE: ${{ secrets.AWS_ROLE }}
       TF_VARS_JSON: ${{ secrets.TF_VARS_JSON }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      PROVIDER_ENV_JSON: ${{ secrets.PROVIDER_ENV_JSON }}
 ```
 
 Applies should always run under a `concurrency` group so two merges cannot

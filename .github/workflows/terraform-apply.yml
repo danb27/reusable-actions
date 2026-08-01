@@ -25,8 +25,11 @@ on:
           Optional JSON object of Terraform variable values, written to
           ci.auto.tfvars.json in the working directory.
         required: false
-      CLOUDFLARE_API_TOKEN:
-        description: 'Optional Cloudflare API token, exported for the Cloudflare provider'
+      PROVIDER_ENV_JSON:
+        description: >-
+          Optional JSON object of environment variables for Terraform providers,
+          e.g. {"CLOUDFLARE_API_TOKEN": "..."}. Keeps this workflow free of a
+          named secret per provider.
         required: false
 
 # Callers must grant: id-token: write, contents: read.
@@ -56,10 +59,10 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE }}
-          aws-region: us-east-1
+          aws-region: us-west-2
           role-session-name: TerraformApply
 
-      # The emptiness check lives in the shell because the secrets context is
+      # The emptiness checks live in the shell because the secrets context is
       # not available to a step-level `if`.
       - name: Write variable file
         env:
@@ -69,10 +72,26 @@ jobs:
             printf '%s' "${TF_VARS_JSON}" > ci.auto.tfvars.json
           fi
 
+      # Provider credentials are environment variables, not Terraform
+      # variables, so they arrive as one JSON object rather than a named secret
+      # per provider. GitHub masks the blob but not the values inside it, so
+      # each is masked explicitly before anything can log it.
+      - name: Export provider credentials
+        env:
+          PROVIDER_ENV_JSON: ${{ secrets.PROVIDER_ENV_JSON }}
+        run: |
+          if [ -z "${PROVIDER_ENV_JSON}" ]; then
+            exit 0
+          fi
+          jq -r '.[] | select(type == "string")' <<< "${PROVIDER_ENV_JSON}" \
+            | while IFS= read -r value; do
+                echo "::add-mask::${value}"
+              done
+          jq -r 'to_entries[] | "\(.key)<<__TF_PROVIDER_ENV__\n\(.value)\n__TF_PROVIDER_ENV__"' \
+            <<< "${PROVIDER_ENV_JSON}" >> "${GITHUB_ENV}"
+
       - name: Init
         run: terraform init -input=false
 
       - name: Apply
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: terraform apply -input=false -auto-approve
