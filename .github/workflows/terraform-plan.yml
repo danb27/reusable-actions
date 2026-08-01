@@ -92,7 +92,21 @@ jobs:
       # No separate `terraform validate` step: plan performs the same checks and
       # fails on anything validate would catch.
       - name: Plan
-        run: terraform plan -input=false -lock=false -no-color | tee plan.txt
+        id: plan
+        run: |
+          terraform plan -input=false -lock=false -no-color -out=tfplan | tee plan.txt
+
+          # A fingerprint of the semantic change set - resource addresses, the
+          # actions, and the before/after values - sorted so key order cannot
+          # affect it, and with none of the timestamps or progress noise that
+          # make the human-readable output differ between identical runs.
+          #
+          # The JSON is piped straight into shasum and never printed: it
+          # contains sensitive attribute values in cleartext.
+          fingerprint=$(terraform show -json tfplan \
+            | jq -S '[.resource_changes[] | {address, actions: .change.actions, before: .change.before, after: .change.after}]' \
+            | shasum -a 256 | cut -d' ' -f1)
+          echo "fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
 
       - name: Comment plan on pull request
         if: ${{ github.event_name == 'pull_request' }}
@@ -109,7 +123,11 @@ jobs:
               : raw;
 
             const marker = `<!-- terraform-plan:${{ inputs.working-directory }} -->`;
-            const comment = `${marker}\n### Terraform plan \`${{ inputs.working-directory }}\`\n\n\`\`\`terraform\n${body}\n\`\`\``;
+            // The apply workflow reads this back to confirm it is applying the
+            // change set that was actually reviewed.
+            const fingerprint =
+              `<!-- terraform-plan-fingerprint:${{ inputs.working-directory }}:${{ steps.plan.outputs.fingerprint }} -->`;
+            const comment = `${marker}\n${fingerprint}\n### Terraform plan \`${{ inputs.working-directory }}\`\n\n\`\`\`terraform\n${body}\n\`\`\``;
 
             const { data: existing } = await github.rest.issues.listComments({
               ...context.repo,

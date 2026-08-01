@@ -32,7 +32,8 @@ on:
           named secret per provider.
         required: false
 
-# Callers must grant: id-token: write, contents: read.
+# Callers must grant: id-token: write, contents: read, pull-requests: read -
+# the last is needed to read back the plan that was reviewed.
 # Callers should also set a `concurrency` group so two merges cannot apply the
 # same state at once.
 
@@ -93,5 +94,46 @@ jobs:
       - name: Init
         run: terraform init -input=false
 
+      # Re-plans, then refuses to continue unless the change set matches the
+      # one fingerprinted on the pull request that produced this commit. This
+      # is what makes "what was reviewed" and "what gets applied" the same
+      # thing rather than two plans that merely happened to agree.
+      - name: Verify the plan matches what was reviewed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIR: ${{ inputs.working-directory }}
+        run: |
+          terraform plan -input=false -no-color -out=tfplan > plan.txt
+
+          actual=$(terraform show -json tfplan \
+            | jq -S '[.resource_changes[] | {address, actions: .change.actions, before: .change.before, after: .change.after}]' \
+            | shasum -a 256 | cut -d' ' -f1)
+
+          # A squash merge rewrites the SHA, but GitHub still maps the commit
+          # back to its pull request, so the reviewed plan stays findable.
+          pr=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" --jq '.[0].number // empty')
+          if [ -z "${pr}" ]; then
+            echo "::error::No pull request found for ${GITHUB_SHA}. Refusing to apply an unreviewed plan."
+            exit 1
+          fi
+
+          expected=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${pr}/comments" --paginate \
+            --jq "[.[].body
+                   | select(test(\"terraform-plan-fingerprint:${DIR}:\"))
+                   | capture(\"terraform-plan-fingerprint:${DIR}:(?<f>[0-9a-f]{64})\").f] | last // empty")
+          if [ -z "${expected}" ]; then
+            echo "::error::Pull request #${pr} has no plan fingerprint for '${DIR}'."
+            exit 1
+          fi
+
+          if [ "${actual}" != "${expected}" ]; then
+            echo "::error::Plan changed since review (reviewed ${expected}, now ${actual}). Re-run the plan and get it re-approved."
+            exit 1
+          fi
+
+          echo "Change set matches the plan reviewed on #${pr}."
+
+      # Applies the saved plan file rather than re-planning, so Terraform
+      # itself rejects it if state moved between the check above and now.
       - name: Apply
-        run: terraform apply -input=false -auto-approve
+        run: terraform apply -input=false tfplan
