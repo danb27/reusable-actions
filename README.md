@@ -7,39 +7,28 @@ Reusable workflows intended to be called from other repositories via `workflow_c
 |---------------------------|-----------------------|--------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | test.yml                  | Python, pytest        | CodeArtifact, pre-commit | Can optionally authenticate to CodeArtifact to install private python packages and turn on pre-commit                                                                                                                |
 | push-code-artifact.yml    | Python, CodeArtifact  |                          | See [this](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services#updating-your-github-actions-workflow) if using OpenID Connect in AWS |
-| terraform-plan.yml        | Terraform, AWS OIDC   | Any TF provider          | Checks formatting and plans, then comments the plan on the pull request. Runs with `-lock=false` so a plan can never block an apply                                                                                  |
-| terraform-apply.yml       | Terraform, AWS OIDC   | Any TF provider          | Applies on merge. Callers should set a `concurrency` group so two merges cannot apply the same state at once                                                                                                         |
+| pr-title.yml              |                       |                          | Enforces a conventional-commit pull request title. Needed wherever squash merging feeds release-please                                                                                                              |
 
-## Terraform workflows
+## Why pr-title.yml exists
 
-Both take AWS credentials by OIDC — no long-lived keys — and both accept an
-optional `TF_VARS_JSON` secret: a JSON object of variable values written to
-`ci.auto.tfvars.json` in the working directory, which Terraform picks up
-automatically. Use it for values that shouldn't live in the repository.
+A repository that squash-merges gets one commit per pull request, and that
+commit's subject is the pull request title. release-please reads those commits
+to decide the version bump and write the changelog — so the title is no longer
+cosmetic. A title that isn't a conventional commit is silently skipped, which is
+a quiet way to lose a release.
 
-```json
-{ "cloudflare_account_id": "abc123", "allowed_emails": ["you@example.com"] }
-```
+## What is deliberately not here
 
-Provider credentials aren't Terraform variables, so they take a second blob,
-`PROVIDER_ENV_JSON`, whose keys become environment variables:
+Terraform plan and apply workflows. An earlier draft of this repo had them;
+[dflook/terraform-github-actions](https://github.com/dflook/terraform-github-actions)
+does the same job and one thing ours did not: `terraform-apply` applies the plan
+that was attached to the pull request and **fails if it is missing or has
+changed**, so what gets applied is what was reviewed. Ours re-planned at merge
+time, which means the plan you read and the plan that ran were two different
+plans that usually agreed.
 
-```json
-{ "CLOUDFLARE_API_TOKEN": "...", "DATADOG_API_KEY": "..." }
-```
-
-A named secret per provider would mean editing this workflow every time a
-downstream repo adopts one. GitHub masks a secret as a whole but not the values
-*inside* a JSON blob, so both workflows mask each value explicitly with
-`::add-mask::` before exporting it.
-
-One blob rather than a named secret per value is a deliberate trade: it keeps
-the workflow interface stable as configurations grow, at the cost of
-granularity.
-
-Terraform version and AWS region are hardcoded to `1.14.3` and `us-west-2`.
-Neither is an input, because nothing needed a second value yet; both are a
-one-line change when something does.
+Consuming repositories call those actions directly. Wrapping a well-designed
+action in a thin workflow of our own would add a layer without adding anything.
 
 ## Example usage
 
@@ -85,58 +74,19 @@ jobs:
       AWS_CODEARTIFACT_REPOSITORY: ${{ secrets.AWS_CODEARTIFACT_REPOSITORY }}
 ```
 
-### `.github/workflows/terraform-plan.yml`
+### `.github/workflows/pr-title.yml`
 
 ```yaml
-name: PR
+name: PR Title
 
 on:
   pull_request:
-    branches: [main]
+    types: [opened, edited, reopened, synchronize]
 
 permissions:
-  contents: read
-  id-token: write
-  pull-requests: write
+  pull-requests: read
 
 jobs:
-  plan:
-    uses: danb27/reusable-actions/.github/workflows/terraform-plan.yml@main
-    with:
-      working-directory: infra
-    secrets:
-      AWS_ROLE: ${{ secrets.AWS_ROLE }}
-      TF_VARS_JSON: ${{ secrets.TF_VARS_JSON }}
-      PROVIDER_ENV_JSON: ${{ secrets.PROVIDER_ENV_JSON }}
+  title:
+    uses: danb27/reusable-actions/.github/workflows/pr-title.yml@main
 ```
-
-### `.github/workflows/terraform-apply.yml`
-
-```yaml
-name: Deploy
-
-on:
-  push:
-    branches: [main]
-
-permissions:
-  contents: read
-  id-token: write
-
-concurrency:
-  group: deploy
-  cancel-in-progress: false
-
-jobs:
-  apply:
-    uses: danb27/reusable-actions/.github/workflows/terraform-apply.yml@main
-    with:
-      working-directory: infra
-    secrets:
-      AWS_ROLE: ${{ secrets.AWS_ROLE }}
-      TF_VARS_JSON: ${{ secrets.TF_VARS_JSON }}
-      PROVIDER_ENV_JSON: ${{ secrets.PROVIDER_ENV_JSON }}
-```
-
-Applies should always run under a `concurrency` group so two merges cannot
-apply the same state at once.
