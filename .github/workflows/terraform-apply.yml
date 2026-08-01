@@ -8,23 +8,6 @@ on:
         required: false
         type: string
         default: '.'
-      terraform-version:
-        description: 'Terraform version to install'
-        required: false
-        type: string
-        default: '1.14.3'
-      aws-region:
-        description: 'AWS region to authenticate against'
-        required: false
-        type: string
-        default: 'us-east-1'
-      environment:
-        description: >-
-          Optional GitHub environment to run in. Attach required reviewers to it
-          for a manual gate before anything is applied.
-        required: false
-        type: string
-        default: ''
     secrets:
       AWS_ROLE:
         description: 'AWS role ARN to assume via OIDC'
@@ -37,20 +20,15 @@ on:
       CLOUDFLARE_API_TOKEN:
         description: 'Optional Cloudflare API token, exported for the Cloudflare provider'
         required: false
-    outputs:
-      outputs-json:
-        description: 'Terraform outputs as JSON. Sensitive outputs are excluded.'
-        value: ${{ jobs.apply.outputs.outputs-json }}
 
 # Callers must grant: id-token: write, contents: read.
+# Callers should also set a `concurrency` group so two merges cannot apply the
+# same state at once.
 
 jobs:
   apply:
     name: Apply
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
-    outputs:
-      outputs-json: ${{ steps.outputs.outputs.json }}
     defaults:
       run:
         shell: bash
@@ -62,14 +40,14 @@ jobs:
       - name: Install Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ${{ inputs.terraform-version }}
+          terraform_version: 1.14.3
           terraform_wrapper: false
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ secrets.AWS_ROLE }}
-          aws-region: ${{ inputs.aws-region }}
+          aws-region: us-east-1
           role-session-name: TerraformApply
 
       # The emptiness check lives in the shell because the secrets context is
@@ -89,14 +67,3 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: terraform apply -input=false -auto-approve
-
-      # Sensitive outputs are filtered out rather than masked, so a caller
-      # cannot accidentally print one into a log.
-      - name: Collect outputs
-        id: outputs
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          json=$(terraform output -json \
-            | jq -c 'with_entries(select(.value.sensitive | not)) | map_values(.value)')
-          echo "json=${json}" >> "$GITHUB_OUTPUT"

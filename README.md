@@ -7,8 +7,8 @@ Reusable workflows intended to be called from other repositories via `workflow_c
 |---------------------------|-----------------------|--------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | test.yml                  | Python, pytest        | CodeArtifact, pre-commit | Can optionally authenticate to CodeArtifact to install private python packages and turn on pre-commit                                                                                                                |
 | push-code-artifact.yml    | Python, CodeArtifact  |                          | See [this](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services#updating-your-github-actions-workflow) if using OpenID Connect in AWS |
-| terraform-plan.yml        | Terraform, AWS OIDC   | Cloudflare               | Formats, validates and plans, then comments the plan on the pull request. Runs with `-lock=false` so a plan can never block an apply                                                                                 |
-| terraform-apply.yml       | Terraform, AWS OIDC   | Cloudflare               | Applies and returns non-sensitive outputs as JSON. Set `environment` to put a required-reviewer gate in front of it                                                                                                  |
+| terraform-plan.yml        | Terraform, AWS OIDC   | Cloudflare               | Checks formatting and plans, then comments the plan on the pull request. Runs with `-lock=false` so a plan can never block an apply                                                                                  |
+| terraform-apply.yml       | Terraform, AWS OIDC   | Cloudflare               | Applies on merge. Callers should set a `concurrency` group so two merges cannot apply the same state at once                                                                                                         |
 
 ## Terraform workflows
 
@@ -25,6 +25,10 @@ One blob rather than a named secret per variable is a deliberate trade: it keeps
 the workflow interface stable as configurations grow, at the cost of granularity.
 Provider credentials that aren't Terraform variables — `CLOUDFLARE_API_TOKEN` —
 stay named secrets so GitHub masks them individually.
+
+Terraform version and AWS region are hardcoded to `1.14.3` and `us-east-1`.
+Neither is an input, because nothing needed a second value yet; both are a
+one-line change when something does.
 
 ## Example usage
 

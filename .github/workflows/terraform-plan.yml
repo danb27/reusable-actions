@@ -8,21 +8,6 @@ on:
         required: false
         type: string
         default: '.'
-      terraform-version:
-        description: 'Terraform version to install'
-        required: false
-        type: string
-        default: '1.14.3'
-      aws-region:
-        description: 'AWS region to authenticate against'
-        required: false
-        type: string
-        default: 'us-east-1'
-      comment-on-pr:
-        description: 'Post the plan as a pull request comment'
-        required: false
-        type: boolean
-        default: true
     secrets:
       AWS_ROLE:
         description: 'AWS role ARN to assume via OIDC'
@@ -37,8 +22,7 @@ on:
         description: 'Optional Cloudflare API token, exported for the Cloudflare provider'
         required: false
 
-# Callers must grant: id-token: write, contents: read, and pull-requests: write
-# when comment-on-pr is enabled.
+# Callers must grant: id-token: write, contents: read, pull-requests: write.
 
 jobs:
   plan:
@@ -55,7 +39,7 @@ jobs:
       - name: Install Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ${{ inputs.terraform-version }}
+          terraform_version: 1.14.3
           terraform_wrapper: false
 
       - name: Check formatting
@@ -65,7 +49,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ secrets.AWS_ROLE }}
-          aws-region: ${{ inputs.aws-region }}
+          aws-region: us-east-1
           role-session-name: TerraformPlan
 
       # The emptiness check lives in the shell because the secrets context is
@@ -81,18 +65,18 @@ jobs:
       - name: Init
         run: terraform init -input=false
 
-      - name: Validate
-        run: terraform validate
-
       # -lock=false because a plan writes nothing. Without it, a plan on a pull
       # request can block an apply running on the default branch.
+      #
+      # No separate `terraform validate` step: plan performs the same checks and
+      # fails on anything validate would catch.
       - name: Plan
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: terraform plan -input=false -lock=false -no-color | tee plan.txt
 
       - name: Comment plan on pull request
-        if: ${{ inputs.comment-on-pr && github.event_name == 'pull_request' }}
+        if: ${{ github.event_name == 'pull_request' }}
         uses: actions/github-script@v8
         env:
           PLAN_PATH: ${{ inputs.working-directory }}/plan.txt
