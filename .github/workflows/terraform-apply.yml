@@ -1,0 +1,102 @@
+name: Terraform Apply
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: 'Directory containing the Terraform root configuration'
+        required: false
+        type: string
+        default: '.'
+      terraform-version:
+        description: 'Terraform version to install'
+        required: false
+        type: string
+        default: '1.14.3'
+      aws-region:
+        description: 'AWS region to authenticate against'
+        required: false
+        type: string
+        default: 'us-east-1'
+      environment:
+        description: >-
+          Optional GitHub environment to run in. Attach required reviewers to it
+          for a manual gate before anything is applied.
+        required: false
+        type: string
+        default: ''
+    secrets:
+      AWS_ROLE:
+        description: 'AWS role ARN to assume via OIDC'
+        required: true
+      TF_VARS_JSON:
+        description: >-
+          Optional JSON object of Terraform variable values, written to
+          ci.auto.tfvars.json in the working directory.
+        required: false
+      CLOUDFLARE_API_TOKEN:
+        description: 'Optional Cloudflare API token, exported for the Cloudflare provider'
+        required: false
+    outputs:
+      outputs-json:
+        description: 'Terraform outputs as JSON. Sensitive outputs are excluded.'
+        value: ${{ jobs.apply.outputs.outputs-json }}
+
+# Callers must grant: id-token: write, contents: read.
+
+jobs:
+  apply:
+    name: Apply
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      outputs-json: ${{ steps.outputs.outputs.json }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE }}
+          aws-region: ${{ inputs.aws-region }}
+          role-session-name: TerraformApply
+
+      # The emptiness check lives in the shell because the secrets context is
+      # not available to a step-level `if`.
+      - name: Write variable file
+        env:
+          TF_VARS_JSON: ${{ secrets.TF_VARS_JSON }}
+        run: |
+          if [ -n "${TF_VARS_JSON}" ]; then
+            printf '%s' "${TF_VARS_JSON}" > ci.auto.tfvars.json
+          fi
+
+      - name: Init
+        run: terraform init -input=false
+
+      - name: Apply
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: terraform apply -input=false -auto-approve
+
+      # Sensitive outputs are filtered out rather than masked, so a caller
+      # cannot accidentally print one into a log.
+      - name: Collect outputs
+        id: outputs
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          json=$(terraform output -json \
+            | jq -c 'with_entries(select(.value.sensitive | not)) | map_values(.value)')
+          echo "json=${json}" >> "$GITHUB_OUTPUT"
